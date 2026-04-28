@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \":*)",
+      "Bash(powershell -Command \"$WScriptShell = New-Object -ComObject WScript.Shell; $Shortcut = $WScriptShell.CreateShortcut\\(''C:\\\\Users\\\\Jxri\\\\Desktop\\\\Stockman.lnk''\\); $Shortcut.TargetPath = ''C:\\\\Users\\\\Jxri\\\\Stockman\\\\start.bat''; $Shortcut.WorkingDirectory = ''C:\\\\Users\\\\Jxri\\\\Stockman''; $Shortcut.Description = ''Stockman - Personal Portfolio Tracker''; $Shortcut.Save\\(\\); Write-Host ''Done''\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\Jxri\\\\Stockman\\\\create_shortcut.ps1\")",
+      "Bash(python -m venv venv)",
+      "Bash(venv/Scripts/pip install:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(venv/Scripts/python -m uvicorn main:app --host 0.0.0.0 --port 8888)",
+      "Bash(curl -s http://localhost:8888/)",
+      "Bash(ls \"C:\\\\Users\\\\Jxri\\\\Stockman\\\\.claude\"\" 2>/dev/null || echo \"dir not found \")",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "project": "Stockman",
+  "updated": "2026-04-21",
+  "todos": [
+    {
+      "id": 1,
+      "category": "devops",
+      "title": "GitHub prep",
+      "details": "Add README, .gitignore, remove hardcoded email from database.py defaults",
+      "priority": "high",
+      "done": false
+    },
+    {
+      "id": 2,
+      "category": "devops",
+      "title": "Auto-rebuild frontend on start",
+      "details": "start.bat should run npm run build automatically so changes apply without manual rebuild",
+      "priority": "high",
+      "done": false
+    },
+    {
+      "id": 3,
+      "category": "feature",
+      "title": "Verify email alerts end-to-end",
+      "details": "Confirm ATR trailing stop emails actually arrive via Gmail SMTP after all recent changes",
+      "priority": "high",
+      "done": false
+    },
+    {
+      "id": 4,
+      "category": "feature",
+      "title": "Price history chart per position",
+      "details": "Visual chart showing stock price over time with stop level overlaid",
+      "priority": "medium",
+      "done": false
+    },
+    {
+      "id": 5,
+      "category": "feature",
+      "title": "Notes field per position",
+      "details": "Free text area for personal thoughts per stock, persisted in DB",
+      "priority": "medium",
+      "done": false
+    },
+    {
+      "id": 6,
+      "category": "feature",
+      "title": "Database backup/restore",
+      "details": "Export stockman.db to safe location, and restore from backup option in Settings",
+      "priority": "medium",
+      "done": false
+    },
+    {
+      "id": 7,
+      "category": "ui",
+      "title": "Mobile layout check",
+      "details": "Test and fix layout on narrow screens",
+      "priority": "low",
+      "done": false
+    },
+    {
+      "id": 8,
+      "category": "other",
+      "title": "Reaktor application letter",
+      "details": "Write cover letter for Reaktor AI Developer role based on Jyri's CV and background",
+      "priority": "medium",
+      "done": false
+    }
+  ]
+}
