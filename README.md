@@ -1,4 +1,4 @@
-# Stockman 📈
+# Stockman
 ### *the sharpest tool in your finance toolbox*
 
 A local-first personal stock investment tracker built for serious retail investors. Stockman runs entirely on your machine — no subscriptions, no cloud, no data sharing. Just you and your portfolio.
@@ -21,48 +21,48 @@ The core insight: **emotion is the enemy of good investing**. Stockman replaces 
 
 ## Features
 
-### 🛡️ ATR Trailing Stops
+###  ATR Trailing Stops
 - Stop price automatically rises as the stock goes up, never moves down
 - Two-tier alerts: **warning** (early heads-up) and **hard stop** (act now)
 - Six presets from Tight (1.5×) to Very Loose (4.5×) with descriptive names
 - Email alerts via Gmail when stops are triggered
 
-### 📊 Portfolio Tracking
+###  Portfolio Tracking
 - Real positions: ticker, shares, average buy price
 - Live prices fetched via yfinance with TTL caching
 - Unrealized P&L, market value, stop status per position
 - EUR/USD toggle for European investors
 - Drag-and-drop row reordering, column rearranging
 
-### 🧠 Signal Score System
+###  Signal Score System
 A structured checklist that scores each position objectively:
 - **Sell signals** (20pts each): deteriorating fundamentals, stop triggered, short interest rising, etc.
 - **Trim signals** (10pts): partial exit reasons
 - **Conviction bonus** (−10pts): "I still believe long-term"
 - Score displayed as % — removes emotion from sell decisions
 
-### 🔍 Watchlist with Short Data
+###  Watchlist with Short Data
 - Short interest %, float, institutional ownership %, days-to-cover
 - Weekly trend arrows (↑/↓) based on snapshot history
 - Data confidence warnings (flags unrealistic institutional % values, etc.)
 - Volatility badge, ATR, earnings countdown
 
-### 📅 Weekly Snapshots
+###  Weekly Snapshots
 - Automatic Monday snapshots of all short/institutional data
 - Trend arrows appear after 2+ weeks of data
 - Manual snapshot trigger available
 
-### 💼 Risk Management
+###  Risk Management
 - Total downside risk if all stops hit simultaneously
 - Stop-out portfolio value (worst-case floor)
 - Risk as % of portfolio (color-coded: green/yellow/red)
 - Risk concentration bar chart per position
 
-### 📓 Journal
+###  Journal
 - Log every buy, sell, and trim with reasons
 - Win/loss stats: completed trades, win rate %, avg win %, avg loss %
 
-### 📖 Guide
+###  Guide
 Built-in finance theory reference covering:
 - Trailing stop mechanics and why they matter
 - ATR explained with examples
@@ -71,7 +71,7 @@ Built-in finance theory reference covering:
 - Seasonality timeline (monthly market patterns)
 - The AXTI lesson: why selling with a system beats holding on emotion
 
-### ⚡ Performance
+###  Performance
 - TTL caching per data type (5min prices → 24h stock details)
 - Parallel fetching with ThreadPoolExecutor
 - ~3–5s load for full portfolio, near-instant on cache hits
