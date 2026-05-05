@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Plus, Trash2, X, Check, Bell, BellOff, RefreshCw, AlertTriangle, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { Plus, Trash2, X, Check, Bell, BellOff, RefreshCw, AlertTriangle, TrendingUp, TrendingDown, Minus, Pencil, GripVertical } from 'lucide-react'
 import { getWatchlist, addWatchlist, updateWatchlist, deleteWatchlist } from '../api.js'
 
 const EMPTY = { ticker: '', notes: '', price_alert_above: '', price_alert_below: '' }
@@ -33,47 +33,19 @@ function EarningsBadge({ e }) {
     <span className={`text-xs font-medium ${urgent ? 'text-red-400' : soon ? 'text-yellow-400' : 'text-slate-400'}`}
       title={`Earnings: ${e.date}`}>
       {e.days === 0 ? 'Today!' : e.days === 1 ? 'Tomorrow' : `${e.days}d`}
-      <span className="text-slate-600 ml-1 text-[10px]">{e.date}</span>
+      <div className="text-slate-600 text-[10px]">{e.date}</div>
     </span>
   )
 }
 
-// Trend arrow for short% (up=bad=red, down=good=green) or inst% (up=good=green, down=bad=red)
 function TrendArrow({ direction, invert = false }) {
-  if (direction === 'tracking') return <span className="text-[10px] text-slate-600" title="Need 2+ weekly snapshots">tracking…</span>
-  if (direction === 'unknown' || direction === 'stable') return <Minus size={11} className="text-slate-600 inline" title="Stable" />
+  if (direction === 'tracking') return <span className="text-[10px] text-slate-600">…</span>
+  if (direction === 'unknown' || direction === 'stable') return <Minus size={11} className="text-slate-600 inline" />
   const isUp = direction === 'up'
-  const isGood = invert ? isUp : !isUp  // for inst%: up=good; for short%: up=bad
+  const isGood = invert ? isUp : !isUp
   return isUp
-    ? <TrendingUp size={12} className={`inline ${isGood ? 'text-emerald-400' : 'text-red-400'}`} />
-    : <TrendingDown size={12} className={`inline ${isGood ? 'text-emerald-400' : 'text-red-400'}`} />
-}
-
-function ConfidenceBar({ confidence }) {
-  if (!confidence || confidence.ok) return null
-  return (
-    <div className="flex items-start gap-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded px-2 py-1.5 mt-2">
-      <AlertTriangle size={12} className="text-yellow-400 mt-0.5 shrink-0" />
-      <div className="text-[11px] text-yellow-300 space-y-0.5">
-        {confidence.issues.map((issue, i) => <div key={i}>{issue}</div>)}
-        <div className="text-yellow-600 text-[10px]">Focus on trend direction, not absolute values</div>
-      </div>
-    </div>
-  )
-}
-
-function StatRow({ items }) {
-  return (
-    <div className="grid grid-cols-3 sm:grid-cols-6 gap-x-4 gap-y-2">
-      {items.map(({ label, value, sub, subColor }) => (
-        <div key={label} className="flex flex-col min-w-0">
-          <span className="text-[10px] text-slate-600 uppercase tracking-wide">{label}</span>
-          <span className="text-sm text-slate-200 font-medium">{value}</span>
-          {sub && <span className={`text-[10px] ${subColor || 'text-slate-600'}`}>{sub}</span>}
-        </div>
-      ))}
-    </div>
-  )
+    ? <TrendingUp size={12} className={`inline ml-0.5 ${isGood ? 'text-emerald-400' : 'text-red-400'}`} />
+    : <TrendingDown size={12} className={`inline ml-0.5 ${isGood ? 'text-emerald-400' : 'text-red-400'}`} />
 }
 
 export default function Watchlist() {
@@ -82,6 +54,12 @@ export default function Watchlist() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState(EMPTY)
+  const [itemOrder, setItemOrder] = useState(() => {
+    try { const s = localStorage.getItem('stockman_watchlist_order'); return s ? JSON.parse(s) : null } catch { return null }
+  })
+  const dragId = useRef(null)
 
   async function load() {
     setLoading(true)
@@ -113,15 +91,57 @@ export default function Watchlist() {
     setItems(i => i.filter(x => x.id !== id))
   }
 
+  function startEdit(item) {
+    setEditingId(item.id)
+    setEditForm({
+      notes: item.notes || '',
+      price_alert_above: item.price_alert_above || '',
+      price_alert_below: item.price_alert_below || '',
+    })
+  }
+
+  async function handleEditSave(id) {
+    setSaving(true)
+    try {
+      await updateWatchlist(id, {
+        notes: editForm.notes || null,
+        price_alert_above: editForm.price_alert_above ? parseFloat(editForm.price_alert_above) : null,
+        price_alert_below: editForm.price_alert_below ? parseFloat(editForm.price_alert_below) : null,
+      })
+      setEditingId(null)
+      await load()
+    } catch (err) { alert(err.message) }
+    finally { setSaving(false) }
+  }
+
   async function resetAlert(id, type) {
     await updateWatchlist(id, { [`alerted_${type}`]: false })
     await load()
   }
 
-  const trend = (item) => item.trend || {}
+  function onDrop(toId) {
+    const fromId = dragId.current
+    if (!fromId || fromId === toId) return
+    const base = itemOrder || items.map(i => i.id)
+    const order = [...base]
+    const fi = order.indexOf(fromId), ti = order.indexOf(toId)
+    if (fi === -1 || ti === -1) return
+    order.splice(fi, 1)
+    order.splice(ti, 0, fromId)
+    setItemOrder(order)
+    localStorage.setItem('stockman_watchlist_order', JSON.stringify(order))
+  }
+
+  const sortedItems = itemOrder
+    ? [...items].sort((a, b) => {
+        const ai = itemOrder.indexOf(a.id), bi = itemOrder.indexOf(b.id)
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+      })
+    : items
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-white">Watchlist ({items.length})</h2>
         <div className="flex gap-2">
@@ -134,6 +154,7 @@ export default function Watchlist() {
         </div>
       </div>
 
+      {/* Add form */}
       {showForm && (
         <div className="card border-brand-500/50">
           <div className="flex items-center justify-between mb-4">
@@ -171,109 +192,206 @@ export default function Watchlist() {
         </div>
       )}
 
+      {/* Table */}
       {loading ? (
-        <div className="text-slate-500 text-center py-12">Loading watchlist data — fetching short interest, float, institutional ownership…</div>
+        <div className="text-slate-500 text-center py-12">Loading watchlist — fetching short interest, float, institutional ownership…</div>
       ) : items.length === 0 ? (
         <div className="card text-center py-12 text-slate-500">Watchlist is empty. Add tickers to monitor.</div>
       ) : (
-        <div className="grid gap-4">
-          {items.map(item => {
-            const t = trend(item)
-            const snapshotCount = t.snapshots ?? 0
-            return (
-              <div key={item.id} className="card space-y-4">
+        <div className="card p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-dark-600 text-xs text-slate-500 uppercase tracking-wide">
+                <th className="w-6 px-2 py-3"></th>
+                <th className="text-left px-4 py-3">Ticker</th>
+                <th className="text-right px-4 py-3">Price</th>
+                <th className="text-right px-4 py-3">Short %</th>
+                <th className="text-right px-4 py-3">Days Cover</th>
+                <th className="text-right px-4 py-3">Float</th>
+                <th className="text-right px-4 py-3">Inst %</th>
+                <th className="text-right px-4 py-3">ATR</th>
+                <th className="text-right px-4 py-3">Earnings</th>
+                <th className="text-center px-4 py-3">Alerts</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedItems.map(item => {
+                const t = item.trend || {}
+                const snapshotCount = t.snapshots ?? 0
+                const hasConfidence = item.confidence && !item.confidence.ok
 
-                {/* ── Row 1: Ticker identity ── */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-white text-2xl tracking-tight">{item.ticker}</span>
-                      {item.current_price && (
-                        <span className="text-slate-200 text-lg font-medium">{fmt(item.current_price)}</span>
-                      )}
-                      <VolBadge data={item.volatility} />
-                    </div>
-                    {item.notes && (
-                      <div className="text-slate-500 text-xs">{item.notes}</div>
+                const row = (
+                  <tr key={item.id}
+                    draggable
+                    onDragStart={() => { dragId.current = item.id }}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={() => onDrop(item.id)}
+                    className="border-b border-dark-600/50 hover:bg-dark-700/50 transition-colors cursor-grab active:cursor-grabbing">
+
+                    {/* Grip */}
+                    <td className="px-2 py-3 text-slate-600 hover:text-slate-400">
+                      <GripVertical size={14} />
+                    </td>
+
+                    {/* Ticker */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-white">{item.ticker}</span>
+                        <VolBadge data={item.volatility} />
+                        {hasConfidence && (
+                          <span title={item.confidence.issues.join(' · ')}>
+                            <AlertTriangle size={12} className="text-yellow-400" />
+                          </span>
+                        )}
+                      </div>
+                      {item.notes && <div className="text-xs text-slate-500 mt-0.5">{item.notes}</div>}
+                      <div className="text-[10px] text-slate-700 mt-0.5">
+                        {snapshotCount === 0 && '⟳ tracking…'}
+                        {snapshotCount === 1 && '⟳ 1 snapshot'}
+                        {snapshotCount >= 2 && `✓ ${snapshotCount} snapshots`}
+                      </div>
+                    </td>
+
+                    {/* Price */}
+                    <td className="px-4 py-3 text-right font-medium text-white">
+                      {fmt(item.current_price)}
+                    </td>
+
+                    {/* Short % */}
+                    <td className="px-4 py-3 text-right">
+                      <div className={`font-medium ${item.short_pct > 20 ? 'text-red-400' : item.short_pct > 10 ? 'text-orange-400' : 'text-slate-300'}`}>
+                        {pct(item.short_pct)} <TrendArrow direction={t.short_trend} invert={false} />
+                      </div>
+                      {item.short_pct > 20 && <div className="text-[10px] text-red-500">⚠ high</div>}
+                      {item.short_pct != null && item.short_pct < 3 && <div className="text-[10px] text-emerald-500">✓ low</div>}
+                    </td>
+
+                    {/* Days to Cover */}
+                    <td className="px-4 py-3 text-right">
+                      <div className={`font-medium ${item.days_to_cover > 10 ? 'text-red-400' : item.days_to_cover > 5 ? 'text-yellow-400' : 'text-slate-300'}`}>
+                        {item.days_to_cover != null ? item.days_to_cover.toFixed(1) : '—'}
+                      </div>
+                      {item.days_to_cover > 10 && <div className="text-[10px] text-red-500">trapped</div>}
+                      {item.days_to_cover > 5 && item.days_to_cover <= 10 && <div className="text-[10px] text-yellow-500">elevated</div>}
+                      {item.days_to_cover != null && item.days_to_cover <= 5 && <div className="text-[10px] text-emerald-500">liquid</div>}
+                    </td>
+
+                    {/* Float */}
+                    <td className="px-4 py-3 text-right text-slate-400 text-xs">
+                      {item.float ?? '—'}
+                    </td>
+
+                    {/* Institution % */}
+                    <td className="px-4 py-3 text-right">
+                      <div className={`font-medium ${item.inst_pct > 70 ? 'text-emerald-400' : item.inst_pct < 30 ? 'text-yellow-400' : 'text-slate-300'}`}>
+                        {pct(item.inst_pct)} <TrendArrow direction={t.inst_trend} invert={true} />
+                      </div>
+                      {item.inst_pct > 70 && <div className="text-[10px] text-emerald-500">smart $</div>}
+                      {item.inst_pct != null && item.inst_pct < 30 && <div className="text-[10px] text-yellow-500">retail</div>}
+                    </td>
+
+                    {/* ATR */}
+                    <td className="px-4 py-3 text-right text-slate-400">
+                      {item.atr != null ? '$' + item.atr.toFixed(2) : '—'}
+                    </td>
+
+                    {/* Earnings */}
+                    <td className="px-4 py-3 text-right">
+                      <EarningsBadge e={item.earnings} />
+                    </td>
+
+                    {/* Alerts */}
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex flex-col items-center gap-1 text-xs">
+                        {item.price_alert_above && (
+                          <div className={`flex items-center gap-1 ${item.alerted_above ? 'text-emerald-400' : 'text-slate-500'}`}>
+                            <Bell size={10} /> {fmt(item.price_alert_above)}
+                            {item.alerted_above && (
+                              <button onClick={() => resetAlert(item.id, 'above')} className="text-slate-600 hover:text-white text-[10px]">(reset)</button>
+                            )}
+                          </div>
+                        )}
+                        {item.price_alert_below && (
+                          <div className={`flex items-center gap-1 ${item.alerted_below ? 'text-red-400' : 'text-slate-500'}`}>
+                            <Bell size={10} /> {fmt(item.price_alert_below)}
+                            {item.alerted_below && (
+                              <button onClick={() => resetAlert(item.id, 'below')} className="text-slate-600 hover:text-white text-[10px]">(reset)</button>
+                            )}
+                          </div>
+                        )}
+                        {!item.price_alert_above && !item.price_alert_below && (
+                          <BellOff size={12} className="text-slate-700" />
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => startEdit(item)} className="btn-ghost p-1.5" title="Edit">
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => handleDelete(item.id)} className="btn-danger p-1.5" title="Delete">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+
+                return (
+                  <React.Fragment key={item.id}>
+                    {row}
+                    {editingId === item.id && (
+                      <tr key={`edit-${item.id}`} className="bg-dark-800/60 border-b border-dark-600/50">
+                        <td colSpan={11} className="px-4 py-3">
+                          <div className="grid grid-cols-3 gap-3 mb-3">
+                            <div>
+                              <label className="text-xs text-slate-400 mb-1 block">Alert Above $</label>
+                              <input className="input" type="number" step="any" placeholder="—"
+                                value={editForm.price_alert_above}
+                                onChange={e => setEditForm(f => ({ ...f, price_alert_above: e.target.value }))} />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400 mb-1 block">Alert Below $</label>
+                              <input className="input" type="number" step="any" placeholder="—"
+                                value={editForm.price_alert_below}
+                                onChange={e => setEditForm(f => ({ ...f, price_alert_below: e.target.value }))} />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+                              <input className="input" placeholder="Notes..."
+                                value={editForm.notes}
+                                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
+                            </div>
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => setEditingId(null)} className="btn-ghost text-xs">Cancel</button>
+                            <button onClick={() => handleEditSave(item.id)} disabled={saving}
+                              className="btn-primary text-xs flex items-center gap-1">
+                              <Check size={13} /> {saving ? 'Saving...' : 'Save'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </div>
-                  <button onClick={() => handleDelete(item.id)} className="btn-danger p-1.5 shrink-0">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-
-                {/* ── Row 2: Key risk metrics ── */}
-                <div className="border-t border-dark-600 pt-3">
-                  <StatRow items={[
-                    {
-                      label: 'Short %',
-                      value: <span>{pct(item.short_pct)} <TrendArrow direction={t.short_trend} invert={false} /></span>,
-                      sub: item.short_pct > 20 ? '⚠ high' : item.short_pct != null && item.short_pct < 3 ? '✓ low' : null,
-                      subColor: item.short_pct > 20 ? 'text-red-500' : 'text-emerald-500',
-                    },
-                    {
-                      label: 'Days to Cover',
-                      value: item.days_to_cover != null ? item.days_to_cover.toFixed(1) : '—',
-                      sub: item.days_to_cover > 10 ? '⚠ trapped' : item.days_to_cover > 5 ? 'elevated' : item.days_to_cover != null ? '✓ liquid' : null,
-                      subColor: item.days_to_cover > 10 ? 'text-red-500' : item.days_to_cover > 5 ? 'text-yellow-500' : 'text-emerald-500',
-                    },
-                    {
-                      label: 'Float',
-                      value: item.float ?? '—',
-                    },
-                    {
-                      label: 'Institution %',
-                      value: <span>{pct(item.inst_pct)} <TrendArrow direction={t.inst_trend} invert={true} /></span>,
-                      sub: item.inst_pct > 70 ? 'smart money' : item.inst_pct != null && item.inst_pct < 30 ? 'retail-driven' : null,
-                      subColor: item.inst_pct > 70 ? 'text-emerald-500' : item.inst_pct < 30 ? 'text-yellow-500' : 'text-slate-600',
-                    },
-                    {
-                      label: 'ATR (14d)',
-                      value: item.atr != null ? '$' + item.atr.toFixed(2) : '—',
-                    },
-                    {
-                      label: 'Earnings',
-                      value: <EarningsBadge e={item.earnings} />,
-                    },
-                  ]} />
-
-                  {/* Snapshot status */}
-                  <div className="mt-2 text-[10px] text-slate-700">
-                    {snapshotCount === 0 && '⟳ First snapshot being taken now — trends available after next weekly snapshot'}
-                    {snapshotCount === 1 && '⟳ 1 snapshot stored — trends available after next weekly snapshot (Monday)'}
-                    {snapshotCount >= 2 && `✓ ${snapshotCount} snapshots · last ${t.latest_date} · prev ${t.prev_date}`}
-                  </div>
-
-                  {/* Confidence warnings */}
-                  <ConfidenceBar confidence={item.confidence} />
-                </div>
-
-                {/* ── Row 3: Price alerts ── */}
-                <div className="flex flex-wrap gap-3 border-t border-dark-600 pt-2">
-                  {item.price_alert_above && (
-                    <div className={`flex items-center gap-1.5 text-xs ${item.alerted_above ? 'text-emerald-400' : 'text-slate-400'}`}>
-                      <Bell size={12} /> Above {fmt(item.price_alert_above)}
-                      {item.alerted_above && (
-                        <button onClick={() => resetAlert(item.id, 'above')} className="text-slate-500 hover:text-white ml-1">(reset)</button>
-                      )}
-                    </div>
-                  )}
-                  {item.price_alert_below && (
-                    <div className={`flex items-center gap-1.5 text-xs ${item.alerted_below ? 'text-red-400' : 'text-slate-400'}`}>
-                      <Bell size={12} /> Below {fmt(item.price_alert_below)}
-                      {item.alerted_below && (
-                        <button onClick={() => resetAlert(item.id, 'below')} className="text-slate-500 hover:text-white ml-1">(reset)</button>
-                      )}
-                    </div>
-                  )}
-                  {!item.price_alert_above && !item.price_alert_below && (
-                    <span className="text-slate-600 flex items-center gap-1 text-xs"><BellOff size={12} /> No price alerts set</span>
-                  )}
-                </div>
-
-              </div>
-            )
-          })}
+                    {hasConfidence && (
+                      <tr key={`conf-${item.id}`} className="bg-yellow-500/5 border-b border-dark-600/30">
+                        <td colSpan={11} className="px-4 py-1.5">
+                          <div className="flex items-center gap-2 text-[11px] text-yellow-300">
+                            <AlertTriangle size={11} className="text-yellow-400 shrink-0" />
+                            {item.confidence.issues.join(' · ')}
+                            <span className="text-yellow-700">— focus on trend direction</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

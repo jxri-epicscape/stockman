@@ -53,6 +53,29 @@ export async function getDetails(ticker) {
   return r.json()
 }
 
+export async function downloadBackup() {
+  const res = await fetch('/api/backup')
+  if (!res.ok) throw new Error('Backup failed')
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `stockman_backup_${new Date().toISOString().slice(0,10)}.db`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function restoreBackup(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/restore', { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Restore failed')
+  }
+  return res.json()
+}
+
 export async function exportPortfolio() {
   const data = await req('/export')
 

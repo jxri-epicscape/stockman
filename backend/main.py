@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import sys
+import shutil
+import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -480,6 +482,37 @@ def manual_run_checks():
     result = check_all_positions()
     watchlist = check_watchlist_alerts()
     return {"positions": result, "watchlist": watchlist}
+
+# ── Backup / Restore ─────────────────────────────────────────────────────────
+
+@app.get("/api/backup")
+def backup_db():
+    from database import DB_PATH
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(status_code=404, detail="Database not found")
+    filename = f"stockman_backup_{datetime.utcnow().strftime('%Y-%m-%d')}.db"
+    return FileResponse(DB_PATH, media_type="application/octet-stream", filename=filename)
+
+
+@app.post("/api/restore")
+async def restore_db(file: UploadFile = File(...)):
+    from database import DB_PATH, init_db
+    # Validate it's a real SQLite file by checking magic bytes
+    header = await file.read(16)
+    if header[:16] != b"SQLite format 3\x00":
+        raise HTTPException(status_code=400, detail="Not a valid SQLite database file")
+    await file.seek(0)
+    # Write to temp file first, then replace
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    try:
+        content = await file.read()
+        tmp.write(header + content)
+        tmp.close()
+        shutil.copy2(tmp.path if hasattr(tmp, 'path') else tmp.name, DB_PATH)
+    finally:
+        os.unlink(tmp.name)
+    return {"ok": True, "message": "Database restored. Restart Stockman to ensure all connections are refreshed."}
+
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

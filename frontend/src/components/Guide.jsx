@@ -236,7 +236,7 @@ export default function Guide() {
           <li>Claims of 98–100% institutional often arise from aggregated data with double-counting</li>
           <li>What matters is not just the % but the distribution — broad ownership = stability, concentrated = additional risk</li>
           <li>Watch for exits: falling inst% quarter over quarter is a warning signal</li>
-          <li><strong>Practical rule:</strong> treat extreme values (>95%) with caution — Stockman flags these automatically</li>
+          <li><strong>Practical rule:</strong> treat extreme values (&gt;95%) with caution — Stockman flags these automatically</li>
         </ul>
 
         <Callout color="yellow">Core principle: track changes over time using the same source. Direction is reliable. Absolute numbers are estimates.</Callout>

@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, RefreshCw, AlertTriangle, TrendingUp, TrendingDown, Edit2, X, Check, ClipboardList, ChevronUp, ChevronDown, GripVertical } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { Plus, Trash2, RefreshCw, AlertTriangle, TrendingUp, TrendingDown, Edit2, X, Check, ClipboardList, ChevronUp, ChevronDown, GripVertical, BarChart2, FileText } from 'lucide-react'
 import { getPortfolio, addPosition, updatePosition, deletePosition, refreshPosition, resetAlert, getEurUsd, addJournal, getVolatility, getHistory, getDetails } from '../api.js'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, CartesianGrid } from 'recharts'
 
 const EMPTY_FORM = {
   ticker: '', shares: '', avg_price: '', date_bought: '',
@@ -12,7 +13,7 @@ const COL_META = {
   shares:       { label: 'Shares',       align: 'right' },
   avg_price:    { label: 'Avg Price',    align: 'right' },
   current:      { label: 'Current',      align: 'right' },
-  market_value: { label: 'Market Value', align: 'right' },
+  market_value: { label: 'Value Now',    align: 'right' },
   pnl:          { label: 'P&L',          align: 'right' },
   earnings:     { label: 'Earnings',     align: 'right' },
   peak:         { label: 'Peak',         align: 'right' },
@@ -69,6 +70,36 @@ function Sparkline({ data }) {
         stroke={isUp ? '#34d399' : '#f87171'}
         strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
+  )
+}
+
+function PriceChart({ data, stopPrice, warnPrice, avgPrice, peakPrice }) {
+  if (!data || data.length < 2) return <div className="text-slate-600 text-sm text-center py-8">No chart data available</div>
+  const formatted = data.map(d => ({ date: d.date?.slice(5), close: d.close }))
+  const closes = data.map(d => d.close)
+  const min = Math.min(...closes, stopPrice || Infinity) * 0.98
+  const max = Math.max(...closes) * 1.02
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={formatted} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#334155" strokeOpacity={0.4} />
+        <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} interval="preserveStartEnd" />
+        <YAxis domain={[min, max]} tick={{ fill: '#64748b', fontSize: 10 }} tickLine={false} axisLine={false}
+          tickFormatter={v => '$' + v.toFixed(0)} width={48} />
+        <Tooltip
+          contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
+          labelStyle={{ color: '#94a3b8' }}
+          formatter={(v) => ['$' + v.toFixed(2), 'Price']}
+        />
+        {stopPrice && <ReferenceLine y={stopPrice} stroke="#f87171" strokeDasharray="4 2" strokeWidth={1.5}
+          label={{ value: 'Stop', fill: '#f87171', fontSize: 10, position: 'insideTopRight' }} />}
+        {warnPrice && !stopPrice && <ReferenceLine y={warnPrice} stroke="#fbbf24" strokeDasharray="4 2" strokeWidth={1}
+          label={{ value: 'Warn', fill: '#fbbf24', fontSize: 10, position: 'insideTopRight' }} />}
+        {avgPrice && <ReferenceLine y={avgPrice} stroke="#6366f1" strokeDasharray="4 2" strokeWidth={1}
+          label={{ value: 'Buy', fill: '#6366f1', fontSize: 10, position: 'insideBottomRight' }} />}
+        <Line type="monotone" dataKey="close" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+      </LineChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -351,6 +382,10 @@ export default function Portfolio() {
   const [sparklines, setSparklines] = useState({}) // { [ticker]: [{close,...}] }
   const [details, setDetails] = useState({}) // { [ticker]: { short_pct, float, inst_pct } }
   const [scoreVersion, setScoreVersion] = useState(0) // bump to re-read localStorage scores
+  const [expandedCharts, setExpandedCharts] = useState(new Set())
+  const [chartData, setChartData] = useState({}) // { [ticker]: data }
+  const [editingNoteId, setEditingNoteId] = useState(null)
+  const [noteText, setNoteText] = useState('')
   const [colOrder, setColOrder] = useState(() => {
     try { return JSON.parse(localStorage.getItem('stockman_col_order')) || REORDERABLE_COLS } catch { return REORDERABLE_COLS }
   })
@@ -453,6 +488,30 @@ export default function Portfolio() {
   async function handleResetAlert(id) {
     await resetAlert(id)
     await load()
+  }
+
+  function toggleChart(pos) {
+    setExpandedCharts(prev => {
+      const next = new Set(prev)
+      if (next.has(pos.id)) { next.delete(pos.id) }
+      else {
+        next.add(pos.id)
+        if (!chartData[pos.ticker]) {
+          getHistory(pos.ticker, 90).then(data => {
+            if (data) setChartData(prev2 => ({ ...prev2, [pos.ticker]: data }))
+          }).catch(() => {})
+        }
+      }
+      return next
+    })
+  }
+
+  async function saveNote(posId) {
+    try {
+      await updatePosition(posId, { notes: noteText })
+      setPositions(prev => prev.map(p => p.id === posId ? { ...p, notes: noteText } : p))
+    } catch (e) { alert(e.message) }
+    finally { setEditingNoteId(null) }
   }
 
   function startEdit(pos) {
@@ -798,7 +857,7 @@ export default function Portfolio() {
               {orderedPositions.map(pos => {
                 const isHardStop = pos.stop_triggered
                 const isWarn = pos.alerted_warn && !pos.stop_triggered
-                return (
+                const row = (
                   <tr key={pos.id}
                     draggable
                     onDragStart={() => { dragRowId.current = pos.id }}
@@ -813,7 +872,31 @@ export default function Portfolio() {
                         <span className="font-bold text-white">{pos.ticker}</span>
                       </div>
                       {pos.date_bought && <div className="text-xs text-slate-500">{pos.date_bought}</div>}
-                      {pos.notes && <div className="text-xs text-slate-500 truncate max-w-32" title={pos.notes}>{pos.notes}</div>}
+                      {editingNoteId === pos.id ? (
+                        <div className="mt-1 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                          <textarea
+                            className="input text-xs py-1 w-40 resize-none"
+                            rows={2}
+                            autoFocus
+                            value={noteText}
+                            onChange={e => setNoteText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(pos.id) } if (e.key === 'Escape') setEditingNoteId(null) }}
+                          />
+                          <div className="flex flex-col gap-1">
+                            <button onClick={() => saveNote(pos.id)} className="text-emerald-400 hover:text-emerald-300"><Check size={12} /></button>
+                            <button onClick={() => setEditingNoteId(null)} className="text-slate-600 hover:text-slate-300"><X size={12} /></button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 mt-0.5 group/note cursor-pointer"
+                          onClick={() => { setEditingNoteId(pos.id); setNoteText(pos.notes || '') }}>
+                          {pos.notes
+                            ? <span className="text-xs text-slate-500 truncate max-w-32" title={pos.notes}>{pos.notes}</span>
+                            : <span className="text-xs text-slate-700 opacity-0 group-hover/note:opacity-100 transition-opacity">+ note</span>
+                          }
+                          <FileText size={10} className="text-slate-700 opacity-0 group-hover/note:opacity-100 transition-opacity shrink-0" />
+                        </div>
+                      )}
                       {details[pos.ticker] && (() => {
                         const d = details[pos.ticker]
                         const parts = []
@@ -828,6 +911,10 @@ export default function Portfolio() {
                     {colOrder.map(col => renderCell(col, pos, isHardStop, isWarn))}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => toggleChart(pos)}
+                          className={`btn-ghost p-1.5 ${expandedCharts.has(pos.id) ? 'text-sky-400' : ''}`} title="Price chart">
+                          <BarChart2 size={13} />
+                        </button>
                         <button onClick={() => setDecisionPos(pos)} className="btn-ghost p-1.5" title="Decision checklist">
                           <ClipboardList size={13} />
                         </button>
@@ -844,6 +931,32 @@ export default function Portfolio() {
                       </div>
                     </td>
                   </tr>
+                )
+                return (
+                  <React.Fragment key={pos.id}>
+                    {row}
+                    {expandedCharts.has(pos.id) && (
+                      <tr key={`chart-${pos.id}`} className="bg-dark-800/60">
+                        <td colSpan={colOrder.length + 3} className="px-4 py-3">
+                          <div className="flex items-center gap-4 mb-2">
+                            <span className="text-xs font-semibold text-slate-400">{pos.ticker} — 90 day price chart</span>
+                            <div className="flex items-center gap-3 text-[10px]">
+                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-sky-400 rounded"></span> Price</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-red-400 rounded" style={{borderTop:'2px dashed'}}></span> Stop</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-indigo-400 rounded"></span> Buy price</span>
+                            </div>
+                          </div>
+                          <PriceChart
+                            data={chartData[pos.ticker] || sparklines[pos.ticker]}
+                            stopPrice={pos.stop_price}
+                            warnPrice={pos.warn_price}
+                            avgPrice={pos.avg_price}
+                            peakPrice={pos.peak_price}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
             </tbody>

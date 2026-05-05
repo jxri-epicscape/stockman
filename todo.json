@@ -8,15 +8,15 @@
       "title": "GitHub prep",
       "details": "Add README, .gitignore, remove hardcoded email from database.py defaults",
       "priority": "high",
-      "done": false
+      "done": true
     },
     {
       "id": 2,
       "category": "devops",
       "title": "Auto-rebuild frontend on start",
-      "details": "start.bat should run npm run build automatically so changes apply without manual rebuild",
+      "details": "start.bat always runs npm run build so changes apply without manual rebuild",
       "priority": "high",
-      "done": false
+      "done": true
     },
     {
       "id": 3,
@@ -32,7 +32,7 @@
       "title": "Price history chart per position",
       "details": "Visual chart showing stock price over time with stop level overlaid",
       "priority": "medium",
-      "done": false
+      "done": true
     },
     {
       "id": 5,
@@ -40,7 +40,7 @@
       "title": "Notes field per position",
       "details": "Free text area for personal thoughts per stock, persisted in DB",
       "priority": "medium",
-      "done": false
+      "done": true
     },
     {
       "id": 6,
@@ -48,7 +48,7 @@
       "title": "Database backup/restore",
       "details": "Export stockman.db to safe location, and restore from backup option in Settings",
       "priority": "medium",
-      "done": false
+      "done": true
     },
     {
       "id": 7,
@@ -56,14 +56,6 @@
       "title": "Mobile layout check",
       "details": "Test and fix layout on narrow screens",
       "priority": "low",
-      "done": false
-    },
-    {
-      "id": 8,
-      "category": "other",
-      "title": "Reaktor application letter",
-      "details": "Write cover letter for Reaktor AI Developer role based on Jyri's CV and background",
-      "priority": "medium",
       "done": false
     }
   ]

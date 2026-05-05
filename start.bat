@@ -20,14 +20,12 @@ if not exist "backend\venv\Scripts\python.exe" (
     )
 )
 
-REM Build frontend if missing
-if not exist "frontend\dist\index.html" (
-    echo Building frontend - please wait...
-    cd frontend
-    call npm install --silent
-    call npm run build --silent
-    cd ..
-)
+REM Always rebuild frontend to pick up latest changes
+echo Building frontend - please wait...
+cd frontend
+call npm install --silent
+call npm run build --silent
+cd ..
 
 echo.
 echo  Starting Stockman on http://localhost:8888

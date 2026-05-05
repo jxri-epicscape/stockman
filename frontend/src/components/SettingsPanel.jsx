@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Save, Mail, Bell, RefreshCw, Download } from 'lucide-react'
-import { getSettings, updateSetting, runChecks, exportPortfolio } from '../api.js'
+import { useState, useEffect, useRef } from 'react'
+import { Save, Mail, Bell, RefreshCw, Download, Database, Upload } from 'lucide-react'
+import { getSettings, updateSetting, runChecks, exportPortfolio, downloadBackup, restoreBackup } from '../api.js'
 
 export default function SettingsPanel() {
   const [settings, setSettings] = useState({})
@@ -79,6 +79,42 @@ export default function SettingsPanel() {
   }
 
   const [exporting, setExporting] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const restoreInputRef = useRef(null)
+
+  async function handleBackup() {
+    setBackingUp(true)
+    try {
+      await downloadBackup()
+      setMsg({ type: 'ok', text: 'Backup downloaded.' })
+    } catch (e) {
+      setMsg({ type: 'err', text: e.message })
+    } finally {
+      setBackingUp(false)
+      setTimeout(() => setMsg(null), 3000)
+    }
+  }
+
+  async function handleRestore(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!confirm(`Restore from "${file.name}"? This will replace ALL current data. Are you sure?`)) {
+      e.target.value = ''
+      return
+    }
+    setRestoring(true)
+    try {
+      const result = await restoreBackup(file)
+      setMsg({ type: 'ok', text: result.message })
+    } catch (err) {
+      setMsg({ type: 'err', text: err.message })
+    } finally {
+      setRestoring(false)
+      e.target.value = ''
+      setTimeout(() => setMsg(null), 6000)
+    }
+  }
 
   async function handleExport() {
     setExporting(true)
@@ -190,6 +226,39 @@ export default function SettingsPanel() {
         >
           <Save size={14} /> Save Defaults
         </button>
+      </div>
+
+      {/* Backup / Restore */}
+      <div className="card space-y-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Database size={16} className="text-brand-500" />
+          <h3 className="font-semibold text-white">Data Backup & Restore</h3>
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Backup saves your entire database — positions, journal, watchlist, snapshots, and settings — as a single <code className="text-slate-300">.db</code> file. Store it in Google Drive, Dropbox, or anywhere safe.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={handleBackup} disabled={backingUp} className="btn-primary flex items-center gap-1.5">
+            <Download size={14} />
+            {backingUp ? 'Downloading…' : 'Download Backup'}
+          </button>
+          <button
+            onClick={() => restoreInputRef.current?.click()}
+            disabled={restoring}
+            className="btn-ghost flex items-center gap-1.5 text-yellow-400 hover:text-yellow-300"
+          >
+            <Upload size={14} />
+            {restoring ? 'Restoring…' : 'Restore from Backup'}
+          </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept=".db"
+            className="hidden"
+            onChange={handleRestore}
+          />
+        </div>
+        <p className="text-[11px] text-slate-600">⚠ Restore replaces all current data. Make a backup first.</p>
       </div>
 
       {/* Export */}
