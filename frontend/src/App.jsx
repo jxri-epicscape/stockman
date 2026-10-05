@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, List, BookOpen, Settings, RefreshCw, Bell, GraduationCap } from 'lucide-react'
+import { TrendingUp, List, BookOpen, Settings, RefreshCw, Bell, GraduationCap, Sparkles } from 'lucide-react'
 import Portfolio from './components/Portfolio.jsx'
 import Watchlist from './components/Watchlist.jsx'
 import Journal from './components/Journal.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
 import Guide from './components/Guide.jsx'
+import AIAnalysis from './components/AIAnalysis.jsx'
 import { runChecks } from './api.js'
 
 const TABS = [
   { id: 'portfolio', label: 'Portfolio', icon: TrendingUp },
   { id: 'watchlist', label: 'Watchlist', icon: List },
   { id: 'journal',   label: 'Journal',   icon: BookOpen },
+  { id: 'ai',        label: 'AI',        icon: Sparkles },
   { id: 'guide',     label: 'Guide',     icon: GraduationCap },
   { id: 'settings',  label: 'Settings',  icon: Settings },
 ]
@@ -86,6 +88,7 @@ export default function App() {
         {tab === 'portfolio' && <Portfolio />}
         {tab === 'watchlist' && <Watchlist />}
         {tab === 'journal'   && <Journal />}
+        {tab === 'ai'        && <AIAnalysis />}
         {tab === 'guide'     && <Guide />}
         {tab === 'settings'  && <SettingsPanel />}
       </main>

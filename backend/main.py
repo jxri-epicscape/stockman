@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import os
 import sys
 import shutil
 import tempfile
+import json
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -38,6 +39,7 @@ class PositionCreate(BaseModel):
     trailing_stop_enabled: bool = True
     atr_multiplier: float = 2.5
     atr_period: int = 14
+    target_price: Optional[float] = None
 
 class PositionUpdate(BaseModel):
     shares: Optional[float] = None
@@ -48,6 +50,7 @@ class PositionUpdate(BaseModel):
     atr_multiplier: Optional[float] = None
     atr_period: Optional[int] = None
     peak_price: Optional[float] = None
+    target_price: Optional[float] = None
 
 class WatchlistCreate(BaseModel):
     ticker: str
@@ -74,6 +77,10 @@ class JournalCreate(BaseModel):
 class SettingsUpdate(BaseModel):
     key: str
     value: str
+
+class AIAnalyzeRequest(BaseModel):
+    question: str
+    mode: str = "default"
 
 # ── Portfolio ─────────────────────────────────────────────────────────────────
 
@@ -123,11 +130,11 @@ def add_position(data: PositionCreate):
 
     conn.execute("""
         INSERT INTO positions (ticker, shares, avg_price, date_bought, notes,
-            trailing_stop_enabled, atr_multiplier, atr_period, peak_price, stop_price)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            trailing_stop_enabled, atr_multiplier, atr_period, peak_price, stop_price, target_price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (ticker, data.shares, data.avg_price, data.date_bought, data.notes,
           int(data.trailing_stop_enabled), data.atr_multiplier, data.atr_period,
-          peak_price, stop_price))
+          peak_price, stop_price, data.target_price))
     conn.commit()
     pos_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     row = conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
@@ -430,6 +437,12 @@ def get_settings():
         settings["email_password"] = "••••••••••••••••"
     else:
         settings["email_password_set"] = False
+    # Never expose Anthropic API key in full
+    if settings.get("anthropic_api_key"):
+        settings["anthropic_api_key_set"] = True
+        settings["anthropic_api_key"] = "sk-ant-••••••••••••••••"
+    else:
+        settings["anthropic_api_key_set"] = False
     return settings
 
 
@@ -477,11 +490,301 @@ def get_details(ticker: str):
     return get_stock_details(ticker.upper())
 
 
+# ── CSV Import (Nordnet) ──────────────────────────────────────────────────────
+
+@app.post("/api/import/csv/preview")
+async def import_csv_preview(file: UploadFile = File(...)):
+    import csv, io as _io
+
+    content = await file.read()
+
+    # Nordnet exports UTF-16 LE with BOM, tab-delimited
+    try:
+        text = content.decode('utf-16')
+    except Exception:
+        try:
+            text = content.decode('utf-8-sig')
+        except Exception:
+            text = content.decode('latin-1', errors='replace')
+
+    all_rows = list(csv.reader(_io.StringIO(text), delimiter='\t'))
+
+    # Drop empty leading rows (BOM artefact)
+    while all_rows and not any(c.strip() for c in all_rows[0]):
+        all_rows.pop(0)
+
+    if len(all_rows) < 2:
+        raise HTTPException(status_code=400, detail="No data rows found in CSV.")
+
+    # Column indices for Nordnet format (0-based)
+    DATE_COL      = 2   # Kauppapäivä
+    TYPE_COL      = 5   # Tapahtumatyyppi
+    SECURITY_COL  = 6   # Arvopaperi
+    ISIN_COL      = 7   # ISIN
+    SHARES_COL    = 8   # Määrä
+    PRICE_COL     = 9   # Kurssi
+    CURRENCY_COL  = 12  # First Valuutta (after Kokonaiskulut)
+    FEE_COL       = 26  # Välityspalkkio
+
+    def parse_num(s):
+        if not s:
+            return None
+        s = s.strip().replace('\xa0', '').replace(' ', '').replace(' ', '')
+        if not s or s in ('-', ''):
+            return None
+        if ',' in s and '.' in s:
+            s = s.replace('.', '').replace(',', '.')
+        elif ',' in s:
+            s = s.replace(',', '.')
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def safe_col(row, idx):
+        return row[idx].strip() if idx < len(row) else ''
+
+    tx_rows = []
+    companies = {}  # security_name → suggested_ticker
+
+    for row in all_rows[1:]:
+        tx_type = safe_col(row, TYPE_COL)
+        if tx_type not in ('OSTO', 'MYYNTI', 'OSINKO'):
+            continue
+
+        security = safe_col(row, SECURITY_COL)
+        if not security:
+            continue
+
+        shares = parse_num(safe_col(row, SHARES_COL))
+        price  = parse_num(safe_col(row, PRICE_COL))
+        fee    = parse_num(safe_col(row, FEE_COL))
+        date   = safe_col(row, DATE_COL)
+        isin   = safe_col(row, ISIN_COL)
+        currency = safe_col(row, CURRENCY_COL)
+
+        action = {'OSTO': 'BUY', 'MYYNTI': 'SELL', 'OSINKO': 'DIVIDEND'}[tx_type]
+
+        if security not in companies:
+            companies[security] = {'ticker': '', 'isin': isin}
+
+        tx_rows.append({
+            'date': date,
+            'action': action,
+            'security_name': security,
+            'isin': isin,
+            'shares': abs(shares) if shares is not None else None,
+            'price': price,
+            'currency': currency,
+            'fee': fee,
+        })
+
+    # Auto-suggest tickers via yfinance search (parallel, capped at 5 concurrent)
+    import yfinance as yf
+
+    def guess_ticker(name):
+        try:
+            results = yf.Search(name, max_results=1).quotes
+            if results:
+                sym = results[0].get('symbol', '')
+                # Prefer plain symbol without exchange suffix
+                return sym.split('.')[0] if '.' in sym else sym
+        except Exception:
+            pass
+        return ''
+
+    unique_names = list(companies.keys())
+    with ThreadPoolExecutor(max_workers=min(len(unique_names), 5)) as ex:
+        tickers = list(ex.map(guess_ticker, unique_names))
+    for name, ticker in zip(unique_names, tickers):
+        companies[name]['ticker'] = ticker
+
+    return {
+        'rows': tx_rows,
+        'companies': {k: v['ticker'] for k, v in companies.items()},
+        'total': len(tx_rows),
+    }
+
+
+class ImportRow(BaseModel):
+    date: str
+    action: str
+    ticker: str
+    security_name: Optional[str] = None
+    shares: Optional[float] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    fee: Optional[float] = None
+
+class ImportConfirmRequest(BaseModel):
+    rows: list
+
+@app.post("/api/import/csv/confirm")
+def import_csv_confirm(data: ImportConfirmRequest):
+    conn = get_db()
+    added = 0
+    skipped = 0
+    for row in data.rows:
+        ticker = (row.get('ticker') or '').strip().upper()
+        date   = (row.get('date') or '').strip()
+        action = (row.get('action') or '').strip()
+        if not ticker or not date or not action:
+            skipped += 1
+            continue
+        # Map DIVIDEND → NOTE for journal
+        journal_action = 'NOTE' if action == 'DIVIDEND' else action
+        shares = row.get('shares')
+        price  = row.get('price')
+        currency = row.get('currency') or ''
+        fee    = row.get('fee')
+        name   = row.get('security_name') or ''
+        fee_str = f" | fee: {fee} {currency}" if fee else ""
+        notes  = f"{name}{fee_str}".strip(" |")
+        try:
+            conn.execute("""
+                INSERT INTO journal (date, ticker, action, shares, price, reason, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (date, ticker, journal_action, shares, price, 'CSV import', notes or None))
+            added += 1
+        except Exception:
+            skipped += 1
+    conn.commit()
+    conn.close()
+    return {'added': added, 'skipped': skipped}
+
+
 @app.post("/api/run-checks")
 def manual_run_checks():
     result = check_all_positions()
     watchlist = check_watchlist_alerts()
     return {"positions": result, "watchlist": watchlist}
+
+# ── AI Analysis ──────────────────────────────────────────────────────────────
+
+@app.post("/api/ai-analyze")
+def ai_analyze(data: AIAnalyzeRequest):
+    conn = get_db()
+    key_row = conn.execute("SELECT value FROM settings WHERE key='anthropic_api_key'").fetchone()
+    api_key = (key_row["value"] or "").strip() if key_row else ""
+
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Anthropic API key not configured. Add it in Settings → AI Analysis."
+        )
+
+    # Gather portfolio data from DB (fast)
+    positions = [dict(r) for r in conn.execute("SELECT * FROM positions ORDER BY created_at").fetchall()]
+    journal   = [dict(r) for r in conn.execute("SELECT * FROM journal ORDER BY date DESC LIMIT 100").fetchall()]
+    watchlist = [dict(r) for r in conn.execute("SELECT * FROM watchlist ORDER BY created_at").fetchall()]
+
+    # Snapshot trends per watchlist ticker
+    snap_rows = conn.execute(
+        "SELECT * FROM stock_snapshots ORDER BY ticker, date DESC"
+    ).fetchall()
+    snapshots = {}
+    for row in snap_rows:
+        d = dict(row)
+        t = d.pop("ticker")
+        if t not in snapshots:
+            snapshots[t] = []
+        if len(snapshots[t]) < 3:          # last 3 snapshots per ticker
+            snapshots[t].append(d)
+    conn.close()
+
+    # Enrich positions with live prices in parallel
+    def _enrich(pos):
+        try:
+            price = get_current_price(pos["ticker"])
+            pos["current_price"] = price
+            if price:
+                pos["current_value"]     = round(price * pos["shares"], 2)
+                pos["unrealized_pnl"]    = round((price - pos["avg_price"]) * pos["shares"], 2)
+                pos["unrealized_pnl_pct"]= round(((price - pos["avg_price"]) / pos["avg_price"]) * 100, 2)
+                pos["stop_triggered"]    = bool(pos.get("stop_price") and price <= pos["stop_price"])
+        except Exception:
+            pos["current_price"] = None
+        return pos
+
+    with ThreadPoolExecutor(max_workers=min(len(positions), 8)) as ex:
+        positions = list(ex.map(_enrich, positions))
+
+    total_cost  = sum(p["avg_price"] * p["shares"] for p in positions)
+    total_value = sum((p.get("current_value") or p["avg_price"] * p["shares"]) for p in positions)
+    total_pnl   = total_value - total_cost
+
+    portfolio_data = {
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "summary": {
+            "total_positions": len(positions),
+            "total_cost_basis": round(total_cost, 2),
+            "total_current_value": round(total_value, 2),
+            "total_unrealized_pnl": round(total_pnl, 2),
+            "total_unrealized_pnl_pct": round((total_pnl / total_cost * 100) if total_cost else 0, 2),
+        },
+        "positions": positions,
+        "journal": journal,
+        "watchlist": watchlist,
+        "short_interest_snapshots": snapshots,
+    }
+
+    if data.mode == "bear":
+        system_prompt = (
+            "You are a ruthless risk analyst conducting a bear case review of this personal stock portfolio. "
+            "Your ONLY job is to find everything that is wrong, weak, or dangerous. "
+            "The user already knows what is working — they need brutal honesty about what is not.\n\n"
+            "Rules for this analysis:\n"
+            "- Do NOT acknowledge strengths or what looks good. Focus entirely on problems.\n"
+            "- Be direct and specific — name actual tickers, cite actual numbers, percentages, and stop levels.\n"
+            "- Dig into every dimension of risk:\n"
+            "  1. MISSING EXIT POINTS — this is critical: check each position for a target_price field. "
+            "Any position where target_price is null or missing has NO defined exit plan. "
+            "The investor bought without knowing when to sell the winner. Name every position missing a target price. "
+            "Explain why this is dangerous: without a profit target, positions are held forever and gains evaporate.\n"
+            "  2. OVEREXPOSURE — sector/theme/style concentration, correlated positions that will all fall together\n"
+            "  3. STOP RISK — positions closest to trailing stop levels; quantify exactly how much downside is left in dollars and %\n"
+            "  4. VALUATION / MOMENTUM — any positions that look extended, parabolic, or showing weakness\n"
+            "  5. JOURNAL PATTERNS — bad habits: averaging down, holding losers, cutting winners too early, FOMO entries, overtrading\n"
+            "  6. SINGLE POINTS OF FAILURE — what one event or market move would destroy this portfolio?\n"
+            "  7. WATCHLIST RISK — are any watched stocks signaling danger (high short interest, deteriorating data)?\n"
+            "  8. WHAT SHOULD BE CUT — name specific positions the investor should seriously consider exiting and why\n\n"
+            "End with a blunt verdict: overall fragility score (1=robust to 10=fragile) and the single #1 most urgent fix."
+        )
+    else:
+        system_prompt = (
+            "You are a financial analysis assistant built into Stockman, a personal stock portfolio tracker. "
+            "The user has shared their complete portfolio data including positions with P&L and trailing ATR stops, "
+            "a trade journal, watchlist stocks with short interest data, and historical snapshots.\n\n"
+            "Your role:\n"
+            "- Analyze the data objectively and give clear, actionable insights\n"
+            "- Be specific — use actual numbers, tickers, and percentages from the data\n"
+            "- Highlight risks: concentration, positions near stops, high short interest, etc.\n"
+            "- Flag patterns in the journal (selling too early, overtrading, etc.) if visible\n"
+            "- Keep responses well-structured with headers or bullet points where helpful\n"
+            "- This is a personal portfolio tracker, not professional financial advice"
+        )
+
+    user_msg = f"Here is my current portfolio data:\n\n{json.dumps(portfolio_data, indent=2)}\n\nQuestion: {data.question}"
+
+    def generate():
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            with client.messages.stream(
+                model="claude-opus-4-7",
+                max_tokens=4096,
+                thinking={"type": "adaptive"},
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+            ) as stream:
+                for text in stream.text_stream:
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
 
 # ── Backup / Restore ─────────────────────────────────────────────────────────
 

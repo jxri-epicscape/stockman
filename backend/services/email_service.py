@@ -109,6 +109,43 @@ def send_warn_alert(ticker: str, shares: float, avg_price: float,
     return send_email(subject, body)
 
 
+def send_target_hit_alert(ticker: str, shares: float, avg_price: float,
+                          current_price: float, target_price: float, new_multiplier: float):
+    gain_pct = ((current_price - avg_price) / avg_price) * 100
+    pnl = (current_price - avg_price) * shares
+
+    subject = f"🎯 TARGET HIT: {ticker} — ATR tightened to {new_multiplier}×"
+    body = f"""
+    <html><body style="font-family: sans-serif; padding: 20px; color: #1a1a2e;">
+    <div style="background: #2ed573; color: #111; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <h2 style="margin:0">🎯 Price Target Reached: {ticker}</h2>
+        <p style="margin:5px 0 0 0; font-size:14px;">ATR trailing stop tightened automatically</p>
+    </div>
+    <table style="width:100%; border-collapse:collapse;">
+        <tr style="background:#f8f9fa"><td style="padding:10px; font-weight:bold">Ticker</td><td style="padding:10px">{ticker}</td></tr>
+        <tr><td style="padding:10px; font-weight:bold">Shares</td><td style="padding:10px">{shares}</td></tr>
+        <tr style="background:#f8f9fa"><td style="padding:10px; font-weight:bold">Avg Buy Price</td><td style="padding:10px">${avg_price:.2f}</td></tr>
+        <tr><td style="padding:10px; font-weight:bold">Current Price</td><td style="padding:10px"><strong>${current_price:.2f}</strong></td></tr>
+        <tr style="background:#f8f9fa"><td style="padding:10px; font-weight:bold">Your Target</td><td style="padding:10px; color:#2ed573"><strong>${target_price:.2f}</strong></td></tr>
+        <tr><td style="padding:10px; font-weight:bold">Unrealized P&L</td>
+            <td style="padding:10px; color:#2ed573"><strong>+${pnl:.2f} (+{gain_pct:.1f}%)</strong></td>
+        </tr>
+        <tr style="background:#f8f9fa"><td style="padding:10px; font-weight:bold">New ATR Multiplier</td>
+            <td style="padding:10px"><strong>{new_multiplier}×</strong> (was tighter to lock in gains)</td>
+        </tr>
+    </table>
+    <div style="margin-top:20px; padding:15px; background:#e8fdf0; border-radius:8px; border-left:4px solid #2ed573;">
+        <strong>What happened:</strong> Your exit target was reached. The trailing stop has been automatically
+        tightened to <strong>{new_multiplier}× ATR</strong>. If the price keeps running, your stop follows.
+        If it reverses, you'll be alerted close to the peak — locking in most of your gain.
+        You can adjust or remove the ATR in the position editor.
+    </div>
+    <p style="color:#888; font-size:12px; margin-top:20px;">Sent by Stockman — your personal portfolio tracker</p>
+    </body></html>
+    """
+    return send_email(subject, body)
+
+
 def send_price_alert(ticker: str, current_price: float, alert_price: float, direction: str):
     direction_word = "above" if direction == "above" else "below"
     subject = f"📈 Price Alert: {ticker} is {direction_word} ${alert_price:.2f}"

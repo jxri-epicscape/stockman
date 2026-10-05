@@ -5,7 +5,8 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContai
 
 const EMPTY_FORM = {
   ticker: '', shares: '', avg_price: '', date_bought: '',
-  notes: '', trailing_stop_enabled: true, atr_multiplier: 2.5, atr_period: 14
+  notes: '', trailing_stop_enabled: true, atr_multiplier: 2.5, atr_period: 14,
+  target_price: '', target_mode: '$'
 }
 
 const REORDERABLE_COLS = ['shares','avg_price','current','market_value','pnl','earnings','peak','stop_atr','status','line']
@@ -73,12 +74,13 @@ function Sparkline({ data }) {
   )
 }
 
-function PriceChart({ data, stopPrice, warnPrice, avgPrice, peakPrice }) {
+function PriceChart({ data, stopPrice, warnPrice, avgPrice, peakPrice, targetPrice }) {
   if (!data || data.length < 2) return <div className="text-slate-600 text-sm text-center py-8">No chart data available</div>
   const formatted = data.map(d => ({ date: d.date?.slice(5), close: d.close }))
   const closes = data.map(d => d.close)
-  const min = Math.min(...closes, stopPrice || Infinity) * 0.98
-  const max = Math.max(...closes) * 1.02
+  const allPrices = [...closes, stopPrice, targetPrice, avgPrice].filter(Boolean)
+  const min = Math.min(...allPrices) * 0.98
+  const max = Math.max(...allPrices) * 1.02
   return (
     <ResponsiveContainer width="100%" height={180}>
       <LineChart data={formatted} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
@@ -97,6 +99,8 @@ function PriceChart({ data, stopPrice, warnPrice, avgPrice, peakPrice }) {
           label={{ value: 'Warn', fill: '#fbbf24', fontSize: 10, position: 'insideTopRight' }} />}
         {avgPrice && <ReferenceLine y={avgPrice} stroke="#6366f1" strokeDasharray="4 2" strokeWidth={1}
           label={{ value: 'Buy', fill: '#6366f1', fontSize: 10, position: 'insideBottomRight' }} />}
+        {targetPrice && <ReferenceLine y={targetPrice} stroke="#34d399" strokeDasharray="4 2" strokeWidth={1.5}
+          label={{ value: 'Target', fill: '#34d399', fontSize: 10, position: 'insideTopLeft' }} />}
         <Line type="monotone" dataKey="close" stroke="#38bdf8" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
       </LineChart>
     </ResponsiveContainer>
@@ -452,6 +456,16 @@ export default function Portfolio() {
         atr_multiplier: parseFloat(form.atr_multiplier),
         atr_period: parseInt(form.atr_period),
         date_bought: form.date_bought || null,
+        target_price: (() => {
+          if (!form.target_price) return null
+          const v = parseFloat(form.target_price)
+          if (isNaN(v)) return null
+          if (form.target_mode === '%') {
+            const base = parseFloat(form.avg_price)
+            return base ? parseFloat((base * (1 + v / 100)).toFixed(4)) : null
+          }
+          return v
+        })(),
       }
       if (editId) {
         await updatePosition(editId, data)
@@ -524,6 +538,8 @@ export default function Portfolio() {
       trailing_stop_enabled: Boolean(pos.trailing_stop_enabled),
       atr_multiplier: pos.atr_multiplier,
       atr_period: pos.atr_period,
+      target_price: pos.target_price || '',
+      target_mode: '$',
     })
     setEditId(pos.id)
     setShowForm(true)
@@ -804,10 +820,38 @@ export default function Portfolio() {
                 <span className="text-sm text-slate-300">Trailing Stop</span>
               </label>
             </div>
-            <div className="md:col-span-4">
+            <div className="md:col-span-3">
               <label className="text-xs text-slate-400 mb-1 block">Notes</label>
               <input className="input" placeholder="Why you bought it..."
                 value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-slate-400">Target <span className="text-emerald-600">exit point</span></label>
+                <div className="flex rounded overflow-hidden border border-dark-600 text-[11px]">
+                  {['$', '%'].map(m => (
+                    <button key={m} type="button"
+                      onClick={() => setForm(f => ({ ...f, target_mode: m, target_price: '' }))}
+                      className={`px-2 py-0.5 transition-colors ${form.target_mode === m ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <input className="input" type="number" step="any"
+                placeholder={form.target_mode === '$' ? 'e.g. 200.00' : 'e.g. 25  (= +25%)'}
+                value={form.target_price}
+                onChange={e => setForm(f => ({ ...f, target_price: e.target.value }))} />
+              {form.target_mode === '%' && form.target_price && form.avg_price && (
+                <div className="text-xs text-emerald-600 mt-1">
+                  = ${(parseFloat(form.avg_price) * (1 + parseFloat(form.target_price) / 100)).toFixed(2)}
+                </div>
+              )}
+              {form.target_mode === '$' && form.target_price && form.avg_price && (
+                <div className="text-xs text-emerald-600 mt-1">
+                  = +{(((parseFloat(form.target_price) - parseFloat(form.avg_price)) / parseFloat(form.avg_price)) * 100).toFixed(1)}% from buy
+                </div>
+              )}
             </div>
             <div className="md:col-span-4 flex gap-2 justify-end">
               <button type="button" onClick={() => { setShowForm(false); setEditId(null) }} className="btn-ghost">Cancel</button>
@@ -863,50 +907,115 @@ export default function Portfolio() {
                     onDragStart={() => { dragRowId.current = pos.id }}
                     onDragOver={e => e.preventDefault()}
                     onDrop={() => onRowDrop(pos.id)}
-                    className={`border-b border-dark-600/50 hover:bg-dark-700/50 transition-colors cursor-grab active:cursor-grabbing ${isHardStop ? 'bg-red-500/5' : isWarn ? 'bg-yellow-500/5' : ''}`}>
+                    className={`group/row border-b border-dark-600/50 hover:bg-dark-700/50 transition-colors cursor-grab active:cursor-grabbing ${isHardStop ? 'bg-red-500/5' : isWarn ? 'bg-yellow-500/5' : ''}`}>
                     <td className="px-2 py-3 text-slate-600 hover:text-slate-400">
                       <GripVertical size={14} />
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center flex-wrap gap-1">
-                        <span className="font-bold text-white">{pos.ticker}</span>
+                    <td className="px-4 py-2.5">
+                      {/* Line 1: ticker + volatility badge */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white tracking-wide">{pos.ticker}</span>
+                        <VolatilityBadge data={volatility[pos.ticker]} />
                       </div>
-                      {pos.date_bought && <div className="text-xs text-slate-500">{pos.date_bought}</div>}
-                      {editingNoteId === pos.id ? (
-                        <div className="mt-1 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+
+                      {/* Line 2: pill badges — one per row */}
+                      <div className="flex flex-col items-start gap-1 mt-1.5">
+                        {pos.date_bought && (
+                          <span className="text-[11px] text-slate-400 bg-dark-700 border border-dark-600 rounded px-1.5 py-0.5 leading-none">
+                            {pos.date_bought}
+                          </span>
+                        )}
+
+                        {pos.target_price && (() => {
+                          const pct = pos.current_price
+                            ? ((pos.target_price - pos.current_price) / pos.current_price * 100)
+                            : null
+                          const hit = pct != null && pct <= 0
+                          if (pos.target_hit) {
+                            return (
+                              <span
+                                className="text-[11px] font-semibold px-1.5 py-0.5 rounded border leading-none bg-emerald-900/60 border-emerald-500/70 text-emerald-200"
+                                title={`Target $${fmt(pos.target_price)} hit — ATR tightened to 0.5× to lock in gains`}
+                              >
+                                🎯 ✓ ATR→0.5×
+                              </span>
+                            )
+                          }
+                          return (
+                            <span
+                              className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border leading-none ${
+                                hit
+                                  ? 'bg-emerald-900/50 border-emerald-600/60 text-emerald-300'
+                                  : 'bg-emerald-950/60 border-emerald-800/50 text-emerald-500'
+                              }`}
+                              title={`Exit target: $${fmt(pos.target_price)}`}
+                            >
+                              🎯{pct != null
+                                ? (hit ? ' ✓ hit' : ` ${pct >= 0 ? '+' : ''}${fmt(pct, 1)}%`)
+                                : ` $${fmt(pos.target_price)}`}
+                            </span>
+                          )
+                        })()}
+
+                        {details[pos.ticker] && (() => {
+                          const d = details[pos.ticker]
+                          return <>
+                            {d.short_pct != null && (
+                              <span
+                                className={`text-[11px] font-medium px-1.5 py-0.5 rounded border leading-none ${
+                                  d.short_pct >= 20
+                                    ? 'bg-red-900/50 border-red-600/60 text-red-300'
+                                    : d.short_pct >= 10
+                                      ? 'bg-orange-900/40 border-orange-600/50 text-orange-300'
+                                      : 'bg-dark-700 border-dark-600 text-slate-400'
+                                }`}
+                                title="Short % of float"
+                              >🐻 {d.short_pct}%</span>
+                            )}
+                            {d.inst_pct != null && (
+                              <span
+                                className="text-[11px] px-1.5 py-0.5 rounded border leading-none bg-dark-700 border-dark-600 text-slate-400"
+                                title="Institutional ownership"
+                              >🏦 {d.inst_pct}%</span>
+                            )}
+                          </>
+                        })()}
+
+                        {/* Note pill — shown when note exists; ghost icon on row hover when empty */}
+                        <button
+                          onClick={() => { setEditingNoteId(pos.id); setNoteText(pos.notes || '') }}
+                          title={pos.notes || 'Add note'}
+                          className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded border leading-none transition-opacity ${
+                            pos.notes
+                              ? 'bg-dark-700 border-dark-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                              : 'bg-transparent border-transparent text-slate-600 opacity-0 group-hover/row:opacity-60 hover:!opacity-100'
+                          }`}
+                        >
+                          <FileText size={10} />
+                          {pos.notes && <span className="max-w-[80px] truncate">{pos.notes}</span>}
+                        </button>
+                      </div>
+
+                      {/* Note editor — inline, shown when active */}
+                      {editingNoteId === pos.id && (
+                        <div className="mt-1 flex items-start gap-1" onClick={e => e.stopPropagation()}>
                           <textarea
-                            className="input text-xs py-1 w-40 resize-none"
+                            className="input text-xs py-1 w-36 resize-none"
                             rows={2}
                             autoFocus
                             value={noteText}
                             onChange={e => setNoteText(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(pos.id) } if (e.key === 'Escape') setEditingNoteId(null) }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(pos.id) }
+                              if (e.key === 'Escape') setEditingNoteId(null)
+                            }}
                           />
                           <div className="flex flex-col gap-1">
-                            <button onClick={() => saveNote(pos.id)} className="text-emerald-400 hover:text-emerald-300"><Check size={12} /></button>
-                            <button onClick={() => setEditingNoteId(null)} className="text-slate-600 hover:text-slate-300"><X size={12} /></button>
+                            <button onClick={() => saveNote(pos.id)} className="text-emerald-400 hover:text-emerald-300"><Check size={11} /></button>
+                            <button onClick={() => setEditingNoteId(null)} className="text-slate-600 hover:text-slate-300"><X size={11} /></button>
                           </div>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-1 mt-0.5 group/note cursor-pointer"
-                          onClick={() => { setEditingNoteId(pos.id); setNoteText(pos.notes || '') }}>
-                          {pos.notes
-                            ? <span className="text-xs text-slate-500 truncate max-w-32" title={pos.notes}>{pos.notes}</span>
-                            : <span className="text-xs text-slate-700 opacity-0 group-hover/note:opacity-100 transition-opacity">+ note</span>
-                          }
-                          <FileText size={10} className="text-slate-700 opacity-0 group-hover/note:opacity-100 transition-opacity shrink-0" />
-                        </div>
                       )}
-                      {details[pos.ticker] && (() => {
-                        const d = details[pos.ticker]
-                        const parts = []
-                        if (d.short_pct != null) parts.push(<span key="s" title="Short % of float" className={`${d.short_pct >= 20 ? 'text-red-400' : d.short_pct >= 10 ? 'text-orange-400' : 'text-slate-500'}`}>S:{d.short_pct}%</span>)
-                        if (d.float) parts.push(<span key="f" className="text-slate-500" title="Float shares">F:{d.float}</span>)
-                        if (d.inst_pct != null) parts.push(<span key="i" className="text-slate-500" title="Institutional ownership">I:{d.inst_pct}%</span>)
-                        if (!parts.length) return null
-                        return <div className="flex gap-1.5 mt-0.5 text-[10px]">{parts}</div>
-                      })()}
-                      <VolatilityBadge data={volatility[pos.ticker]} />
                     </td>
                     {colOrder.map(col => renderCell(col, pos, isHardStop, isWarn))}
                     <td className="px-4 py-3">
@@ -942,8 +1051,9 @@ export default function Portfolio() {
                             <span className="text-xs font-semibold text-slate-400">{pos.ticker} — 90 day price chart</span>
                             <div className="flex items-center gap-3 text-[10px]">
                               <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-sky-400 rounded"></span> Price</span>
-                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-red-400 rounded" style={{borderTop:'2px dashed'}}></span> Stop</span>
-                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-indigo-400 rounded"></span> Buy price</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-red-400 rounded"></span> Stop</span>
+                              <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-indigo-400 rounded"></span> Buy</span>
+                              {pos.target_price && <span className="flex items-center gap-1"><span className="inline-block w-4 h-0.5 bg-emerald-400 rounded"></span> Target</span>}
                             </div>
                           </div>
                           <PriceChart
@@ -952,6 +1062,7 @@ export default function Portfolio() {
                             warnPrice={pos.warn_price}
                             avgPrice={pos.avg_price}
                             peakPrice={pos.peak_price}
+                            targetPrice={pos.target_price}
                           />
                         </td>
                       </tr>

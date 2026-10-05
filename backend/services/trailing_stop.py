@@ -1,6 +1,6 @@
 from services.market_data import get_current_price, get_atr
 from database import get_db
-from services.email_service import send_hard_stop_alert, send_warn_alert, send_price_alert
+from services.email_service import send_hard_stop_alert, send_warn_alert, send_price_alert, send_target_hit_alert
 from datetime import datetime
 
 
@@ -37,6 +37,25 @@ def check_all_positions():
         # Update peak if price is higher
         new_peak = max(peak_price, current_price)
         multiplier = pos["atr_multiplier"]
+
+        # Auto-tighten ATR when exit target is first reached
+        target_price = pos["target_price"] if "target_price" in pos.keys() else None
+        target_hit = bool(pos["target_hit"]) if "target_hit" in pos.keys() else False
+        tight_multiplier = 0.5
+        if target_price and not target_hit and current_price >= target_price:
+            multiplier = tight_multiplier
+            conn.execute(
+                "UPDATE positions SET atr_multiplier = ?, target_hit = 1 WHERE id = ?",
+                (tight_multiplier, pos["id"])
+            )
+            send_target_hit_alert(
+                ticker=ticker,
+                shares=pos["shares"],
+                avg_price=pos["avg_price"],
+                current_price=current_price,
+                target_price=target_price,
+                new_multiplier=tight_multiplier,
+            )
 
         # warning stop = peak - (atr × multiplier)
         warn_price = calculate_warn_price(new_peak, atr, multiplier)

@@ -76,6 +76,7 @@ def init_db():
         ("default_atr_multiplier", "2.5"),
         ("default_atr_period", "14"),
         ("alerts_enabled", "1"),
+        ("anthropic_api_key", ""),
     ]
     for key, value in defaults:
         c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -101,6 +102,14 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE positions ADD COLUMN warn_price REAL")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE positions ADD COLUMN target_price REAL")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE positions ADD COLUMN target_hit INTEGER DEFAULT 0")
     except Exception:
         pass
 

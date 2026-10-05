@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Save, Mail, Bell, RefreshCw, Download, Database, Upload } from 'lucide-react'
+import { Save, Mail, Bell, RefreshCw, Download, Database, Upload, Sparkles, FileInput } from 'lucide-react'
 import { getSettings, updateSetting, runChecks, exportPortfolio, downloadBackup, restoreBackup } from '../api.js'
+import ImportCSV from './ImportCSV.jsx'
 
 export default function SettingsPanel() {
   const [settings, setSettings] = useState({})
@@ -15,6 +16,7 @@ export default function SettingsPanel() {
   const [alertsEnabled, setAlertsEnabled] = useState(true)
   const [defaultMultiplier, setDefaultMultiplier] = useState('2.5')
   const [defaultPeriod, setDefaultPeriod] = useState('14')
+  const [anthropicKey, setAnthropicKey] = useState('')
 
   async function load() {
     setLoading(true)
@@ -25,6 +27,7 @@ export default function SettingsPanel() {
       setAlertsEnabled(s.alerts_enabled === '1')
       setDefaultMultiplier(s.default_atr_multiplier || '2.5')
       setDefaultPeriod(s.default_atr_period || '14')
+      // Don't pre-fill the API key field — user must re-enter it to change
     } finally {
       setLoading(false)
     }
@@ -261,6 +264,46 @@ export default function SettingsPanel() {
         <p className="text-[11px] text-slate-600">⚠ Restore replaces all current data. Make a backup first.</p>
       </div>
 
+      {/* AI Analysis */}
+      <div className="card space-y-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles size={16} className="text-brand-500" />
+          <h3 className="font-semibold text-white">AI Analysis</h3>
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed -mt-2">
+          Powers the AI tab. Get a Claude API key at{' '}
+          <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">
+            console.anthropic.com
+          </a>
+          . Your portfolio data is sent to Claude when you ask a question.
+        </p>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">
+            Anthropic API Key
+            {settings.anthropic_api_key_set && <span className="text-emerald-400 ml-2">✓ Set</span>}
+          </label>
+          <input
+            className="input"
+            type="password"
+            placeholder={settings.anthropic_api_key_set ? 'Leave blank to keep existing' : 'sk-ant-…'}
+            value={anthropicKey}
+            onChange={e => setAnthropicKey(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={async () => {
+            if (!anthropicKey.trim()) return
+            await save('anthropic_api_key', anthropicKey.trim())
+            setAnthropicKey('')
+          }}
+          disabled={saving === 'anthropic_api_key' || !anthropicKey.trim()}
+          className="btn-primary flex items-center gap-1.5"
+        >
+          <Save size={14} />
+          {saving === 'anthropic_api_key' ? 'Saving…' : 'Save API Key'}
+        </button>
+      </div>
+
       {/* Export */}
       <div className="card space-y-3">
         <div className="flex items-center gap-2 mb-2">
@@ -283,6 +326,15 @@ export default function SettingsPanel() {
           <Download size={14} />
           {exporting ? 'Preparing export…' : 'Download stockman_export.json'}
         </button>
+      </div>
+
+      {/* Import CSV */}
+      <div className="card space-y-3">
+        <div className="flex items-center gap-2 mb-2">
+          <FileInput size={16} className="text-brand-500" />
+          <h3 className="font-semibold text-white">Import Transactions</h3>
+        </div>
+        <ImportCSV />
       </div>
 
       {/* Manual check */}
